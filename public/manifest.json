@@ -1,0 +1,21 @@
+{
+  "name": "DRIFT",
+  "short_name": "DRIFT",
+  "description": "A high-fidelity spatial music and outfit archive.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "icons": [
+    {
+      "src": "/icon?size=192",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon?size=512",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

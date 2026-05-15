@@ -85,12 +85,15 @@ export function ImageCropper({ image, onCropComplete, onCancel }: Props) {
       exit={{ opacity: 0 }}
       className="fixed inset-0 z-[300] bg-black/90 backdrop-blur-xl flex flex-col items-center justify-center p-6"
     >
-      <div className="relative w-full max-w-[400px] aspect-[3/4] bg-[#050505] overflow-hidden rounded-sm border border-white/10 shadow-2xl">
+      <div 
+        className="relative w-[80vw] max-w-[400px] aspect-[9/16] max-h-[60vh] bg-[#050505] overflow-hidden rounded-sm border border-white/10 shadow-2xl"
+        style={{ touchAction: 'none' }}
+      >
         <Cropper
           image={image}
           crop={crop}
           zoom={zoom}
-          aspect={3 / 4}
+          aspect={9 / 16}
           onCropChange={onCropChange}
           onCropComplete={onCropAreaComplete}
           onZoomChange={onZoomChange}
@@ -137,8 +140,8 @@ export function ImageCropper({ image, onCropComplete, onCancel }: Props) {
         </div>
       </div>
       
-      <div className="mt-12 text-center pointer-events-none opacity-20">
-         <p className="font-dm-sans text-[8px] uppercase tracking-[.6em]">3:4 Editorial standard / confirmed</p>
+      <div className="mt-8 text-center pointer-events-none opacity-20">
+         <p className="font-dm-sans text-[8px] uppercase tracking-[.6em]">9:16 Full Screen / confirmed</p>
       </div>
     </motion.div>
   );
