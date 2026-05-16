@@ -94,7 +94,7 @@ export async function GET(request: Request) {
   try {
     const { data: pairing } = await supabase
         .from("pairings")
-        .select("song_title, artist, image_url, preview_url")
+        .select("song_title, artist, preview_url")
         .eq("spotify_url", url)
         .maybeSingle();
 
@@ -102,70 +102,74 @@ export async function GET(request: Request) {
         console.log(`[MusicResolve] Soft Cache Hit (DB): ${pairing.song_title}`);
         name = pairing.song_title;
         artist = pairing.artist || artist;
+        
+        // Trust cached preview_url if it's NOT Deezer (Deezer URLs expire)
+        if (pairing.preview_url && !pairing.preview_url.includes("dzcdn.net")) {
+            previewUrl = pairing.preview_url;
+        }
     }
   } catch (e) {
-    console.warn("[MusicResolve] DB Cache Error (continuing to Spotify):", e);
+    console.warn("[MusicResolve] DB Cache Error:", e);
   }
 
   // --- 1. Spotify Authentication ---
   const token = await getSpotifyAccessToken();
   
-  if (!token) {
-    console.error("[MusicResolve] Spotify Auth Failed. Resolve bridge is down.");
-    // --- DIAGNOSTIC LOG ---
-    const auth = Buffer.from(`${SPOTIFY_CLIENT_ID}:${SPOTIFY_CLIENT_SECRET}`).toString("base64");
+  if (token) {
+    // --- 2. Fetch Spotify Metadata (Resilient with Retry) ---
     try {
-        const diagRes = await fetch("https://accounts.spotify.com/api/token", {
-            method: "POST",
-            headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/x-www-form-urlencoded" },
-            body: "grant_type=client_credentials",
-        });
-        const diagErr = await diagRes.text();
-        console.error(`[MusicResolve DIAGNOSTIC] Spotify Token Status: ${diagRes.status} | Body: ${diagErr}`);
-    } catch(e) {}
-    
-    return NextResponse.json({ 
-      error: "Spotify Auth Failed",
-      details: "Check Client ID and Secret validity"
-    }, { status: 500 });
-  }
-
-  // --- 2. Fetch Spotify Metadata (Resilient with Retry) ---
-  try {
-    console.log(`[MusicResolve] Fetching Spotify Metadata [${trackId}]...`);
-    const spotifyRes = await fetchWithRetry(`https://api.spotify.com/v1/tracks/${trackId}`, {
-      headers: { Authorization: `Bearer ${token}` },
-      cache: "no-store", 
-    });
-    
-    if (spotifyRes.ok) {
-      const track = await spotifyRes.json();
-      if (track) {
-          name = track.name || name;
-          artist = track.artists[0]?.name || artist;
-          image = track.album?.images[0]?.url || image;
-          isrc = track.external_ids?.isrc;
-          previewUrl = track.preview_url;
-          console.log(`[MusicResolve] Found: ${name} by ${artist}`);
+      console.log(`[MusicResolve] Fetching Spotify Metadata [${trackId}]...`);
+      const spotifyRes = await fetchWithRetry(`https://api.spotify.com/v1/tracks/${trackId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store", 
+      });
+      
+      if (spotifyRes.ok) {
+        const track = await spotifyRes.json();
+        if (track) {
+            name = track.name || name;
+            artist = track.artists[0]?.name || artist;
+            image = track.album?.images[0]?.url || image;
+            isrc = track.external_ids?.isrc;
+            previewUrl = track.preview_url || previewUrl;
+            console.log(`[MusicResolve] Found: ${name} by ${artist}`);
+        }
+      } else {
+          const errTxt = await spotifyRes.text();
+          console.warn(`[MusicResolve] Spotify Metadata failed: ${spotifyRes.status} | Body: ${errTxt}`);
       }
-    } else {
-        const errTxt = await spotifyRes.text();
-        console.warn(`[MusicResolve] Spotify Metadata failed: ${spotifyRes.status} | Body: ${errTxt}`);
+    } catch (e) {
+      console.warn("[MusicResolve] Spotify Metadata network error:", e);
     }
-  } catch (e) {
-    console.warn("[MusicResolve] Spotify Metadata network error:", e);
+  } else {
+    console.warn("[MusicResolve] Spotify Auth Failed, skipping Spotify metadata.");
   }
 
-  // --- 3. Deezer Fallback (ISRC ONLY - No Guessing) ---
-  if (!previewUrl && isrc) {
+  // --- 3. Deezer Fallback (ISRC or SEARCH) ---
+  // If we don't have a preview or image, try Deezer
+  if (!previewUrl || !image) {
     try {
-      console.log(`[MusicResolve] Spotify preview missing. Falling back to Deezer ISRC [${isrc}]...`);
-      const deezerRes = await fetch(`https://api.deezer.com/2.0/track/isrc:${isrc}`);
-      const deezerTrack = await deezerRes.json();
-      if (deezerTrack && !deezerTrack.error) {
-        previewUrl = deezerTrack.preview;
-        if (name === "Unknown Track") name = deezerTrack.title;
-        if (artist === "Unknown Artist") artist = deezerTrack.artist?.name;
+      if (isrc) {
+        console.log(`[MusicResolve] Spotify data incomplete. Falling back to Deezer ISRC [${isrc}]...`);
+        const deezerRes = await fetch(`https://api.deezer.com/2.0/track/isrc:${isrc}`);
+        const deezerTrack = await deezerRes.json();
+        if (deezerTrack && !deezerTrack.error) {
+          previewUrl = deezerTrack.preview || previewUrl;
+          image = deezerTrack.album?.cover_medium || image;
+          if (name === "Unknown Track") name = deezerTrack.title;
+          if (artist === "Unknown Artist") artist = deezerTrack.artist?.name;
+        }
+      } else if (name !== "Unknown Track") {
+        // Search Deezer by name and artist (Powerful fallback for Spotify 403)
+        console.log(`[MusicResolve] No ISRC. Searching Deezer for: ${artist} - ${name}`);
+        const searchRes = await fetch(`https://api.deezer.com/2.0/search?q=${encodeURIComponent(`${artist} ${name}`)}&limit=1`);
+        const searchData = await searchRes.json();
+        if (searchData.data && searchData.data.length > 0) {
+          const topResult = searchData.data[0];
+          previewUrl = topResult.preview || previewUrl;
+          image = topResult.album?.cover_medium || image;
+          console.log(`[MusicResolve] Deezer Search Hit: ${topResult.title}`);
+        }
       }
     } catch (e) {
       console.warn("[MusicResolve] Deezer fallback failure:", e);

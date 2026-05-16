@@ -12,41 +12,27 @@ export async function GET(request: Request) {
   const rangeHeader = request.headers.get("range");
 
   try {
-    const isDeezer = audioUrl.includes("dzcdn.net");
-    
-    // Minimalist fetch: Stripping fingerprint headers to bypass CDN bot-detection (403)
+    // Naked fetch: Stripping all custom headers to avoid fingerprinting
     const response = await fetch(audioUrl, {
       method: "GET",
-      cache: "no-store", 
-      referrerPolicy: "no-referrer",
-      headers: {
-        "User-Agent": request.headers.get("user-agent") || "Mozilla/5.0",
-        "Accept": "*/*",
-        "Range": rangeHeader || "bytes=0-",
-        "Accept-Language": request.headers.get("accept-language") || "en-US,en;q=0.9",
-        "Connection": "keep-alive",
-      }
+      cache: "no-store",
     });
 
-    if (!response.ok && response.status !== 206) {
+    if (!response.ok) {
        console.error(`[AudioProxy] remote status: ${response.status} for ${audioUrl.slice(0, 60)}...`);
        return NextResponse.json({ error: "CDN Blocked Access" }, { status: response.status });
     }
 
-    // 2. Stream the body directly to the client (Partial or Full)
+    const data = await response.arrayBuffer();
     const contentType = response.headers.get("Content-Type") || "audio/mpeg";
-    const contentRange = response.headers.get("Content-Range");
-    const contentLength = response.headers.get("Content-Length");
     
-    return new Response(response.body, {
-      status: response.status,
+    return new Response(data, {
+      status: 200,
       headers: {
         "Content-Type": contentType,
         "Cache-Control": "public, max-age=31536000, immutable",
         "Access-Control-Allow-Origin": "*",
-        "Accept-Ranges": "bytes",
-        ...(contentRange && { "Content-Range": contentRange }),
-        ...(contentLength && { "Content-Length": contentLength }),
+        "Content-Length": data.byteLength.toString(),
       },
     });
 

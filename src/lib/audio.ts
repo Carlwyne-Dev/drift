@@ -9,23 +9,20 @@ class AudioEngine {
 
   onLoadError: ((id: string) => void) | null = null;
 
-  private getFinalUrls(url: string | null): string[] {
-    if (!url) return [];
+  private getFinalUrl(url: string | null): string {
+    if (!url) return "";
     
+    // Spotify natively supports CORS and direct fetching
     const isCorsReady = 
       url.includes("scdn.co") || 
       url.includes("akamaized.net") || 
       url.includes("spotify.com") ||
-      url.includes("dzcdn.net") || 
       url.includes("fbcdn.net");
 
-    // If CORS-ready, try direct FIRST, then proxy as fallback
-    if (isCorsReady) {
-      return [url, `/api/music/proxy?url=${encodeURIComponent(url)}` ];
-    }
+    if (isCorsReady) return url;
 
-    // Default: try Proxy FIRST, then direct as a desperate fallback
-    return [ `/api/music/proxy?url=${encodeURIComponent(url)}`, url ];
+    // Deezer blocks direct requests, always proxy
+    return `/api/music/proxy?url=${encodeURIComponent(url)}`;
   }
 
   /**
@@ -39,10 +36,11 @@ class AudioEngine {
       if (firstId) this.evict(firstId);
     }
 
-    const sources = this.getFinalUrls(url);
+    const finalUrl = this.getFinalUrl(url);
+    console.log(`[AudioEngine] Priming ${id}: ${finalUrl.slice(0, 80)}...`);
     
     const howl = new Howl({
-      src: sources,
+      src: [finalUrl],
       html5: true,
       format: ['mp3'],
       loop: true,
@@ -57,6 +55,7 @@ class AudioEngine {
 
     this.howls.set(id, howl);
   }
+
 
   async play(id: string, url: string | null) {
     // 1. If already playing this ID, skip
